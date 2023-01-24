@@ -1,0 +1,94 @@
+library(limma)
+library(DESeq2)
+
+#read in files 
+raw.genecounts = read.table (file = "bulk_RNAseq_raw_counts.txt.minRib.txt.PC.txt",header = T,sep = "\t",row.names = 1)
+
+#correct for UMI saturation the log = ln!!!! no log10 no log2 its natural log
+raw.genecounts=round(-4096*(log(1-(raw.genecounts/4096))))
+
+#check header
+raw.genecounts[1:10,1:10]
+
+#Scale before quantile normalization
+raw.genecounts=t(t(raw.genecounts)/colSums(raw.genecounts))*100000
+
+#quantile normalize
+raw.genecounts=round(limma::normalizeQuantiles(raw.genecounts))
+
+######   deseq for confounders
+
+metadata <- read.table(file ="characteristic_currentsmoking_clinical_data.txt" ,header = T ,sep = "\t",row.names = 1) ## read metadata NOTE sep="\t"
+conmetadata <- metadata[,c("sex" ,"age","gfr_mdrd","hypertension_composite","smokercurrent","hypertension_drugs")]
+
+## DEG
+dds <- DESeqDataSetFromMatrix(raw.genecounts_selcted ,conmetadata , design = ~ sex+age+gfr_mdrd+hypertension_composite+hypertension_drugs+smokercurrent) 
+keep <- rowSums (counts(dds) ) >= 10
+dds <- dds[keep,]
+dds <- DESeq(dds)
+### results the dds
+res <- results(dds , contrast = c( "smokercurrent","yes","no"))
+
+
+######  volcano plot  #####
+
+res.df <- as.data.frame(res)
+res.df$geneid <- rownames(res.df)
+res.df <- res.df %>% 
+  mutate(genename = str_split(geneid, "_", simplify = TRUE)[ , 1])
+
+pdf(file = "volcano_corageandsex.pdf",width = 8, height = 5)
+EnhancedVolcano(res,
+                lab = res.df$genename,
+                x = 'log2FoldChange',
+                y = 'pvalue',
+                #xlim = c(-5, 5),
+                #ylim = c(0,10),
+                title = '',
+                subtitle = '',
+                subtitleLabSize = 14,
+                pCutoff = 10e-6,
+                FCcutoff = 0.4,
+                pointSize = 1.0,
+                labSize = 2.0,
+                drawConnectors = F,
+                widthConnectors = 0.5,
+                legendPosition = "top")
+dev.off()
+
+#######    GO analysis  #######
+
+gene <- read.table (file = "deseqresults_pvalue_currentsmoke.csv",header = T,sep = ";",row.names = 1)
+gene <- gene[order(gene$log2FoldChange ,decreasing = TRUE),]
+gene$geneid <- rownames(gene)
+gene <- gene %>% 
+  mutate(eng_id = str_split(geneid, "_", simplify = TRUE)[ , 2])
+gene <- gene%>% 
+  mutate(genename = str_split(geneid, "_", simplify = TRUE)[ , 1]
+
+engse <- enrichGO(gene=gene_up$genename,
+             ont ="ALL",
+             keyType = "SYMBOL",
+             minGSSize = 3,
+             maxGSSize = 800,
+             pvalueCutoff = 0.05,
+             OrgDb = org.Hs.eg.db,
+             pAdjustMethod = "none")
+
+
+
+pdf(file = "enrichcurrentsmoker.pdf",width = 5, height = 5)
+dotplot(engse,showCategory=10 ,color = "pvalue" ,title ="upregulate",font.size =8)
+dev.off() 
+
+## boxplot
+
+dds <- estimateSizeFactors(dds)
+counts(dds, normalized=TRUE)
+gene_counts <- counts(dds[ 'CRLF1_ENSG00000006016',], normalized = TRUE)
+
+m <- list(counts = as.numeric(gene_counts), group = as.factor(all$smokercurrent))
+m <- as_tibble(m)
+p <- ggplot(m,aes(group,counts,ymax =10))+geom_boxplot()+geom_jitter(width =0.1)
+p
+boxplot(counts ~ group  , data = m, ylim = c(0,10) ,ylab = "CRLF1 counts" , xlab ="smoke" , main ="gene counts")
